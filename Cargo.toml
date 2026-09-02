@@ -1,6 +1,6 @@
 [package]
 name = "savant-elite"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Windows-first cross-platform Rust CLI for the Kinesis Savant Elite / X-keys USB foot pedal"
 license-file = "LICENSE"
