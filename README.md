@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT%2BOpenAI%2FAnthropic%20Rider-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
 
-Windows-first Rust CLI for the discontinued first-generation Kinesis Savant Elite / X-keys USB foot pedal.
+Windows command-line tool for the discontinued first-generation Kinesis Savant Elite / X-keys USB foot pedal.
 
 This repository is a fork of [Dicklesworthstone/savant-elite](https://github.com/Dicklesworthstone/savant-elite). It targets the FS30A-12 and other first-generation models that use the original **learn** style of programming, not the protocol assumed upstream.
 
@@ -21,19 +21,23 @@ The [upstream repository](https://github.com/Dicklesworthstone/savant-elite) use
 
 This tool does **not** program Savant Elite2 units. Those use the SmartSet app and a virtual drive.
 
-## Install and program a key
+## Install savant
 
-`savant` is a Windows command-line tool. You use it to see whether the pedal is connected, watch what a pedal types in everyday use, and write one key mapping at a time.
+1. Open the [latest GitHub Release](https://github.com/SamLeatherdale/savant-elite/releases/latest).
+2. Download `savant-x86_64-pc-windows-msvc.zip`.
+3. Unzip it and copy `savant.exe` to a folder on your `PATH`.
 
-If you do not have a `savant` binary yet, [build from source or download a Windows release](#get-a-windows-build).
+To build from source or publish a release, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 The first time you want to change a mapping, [install the programming driver once](#install-the-programming-driver-once). You do not repeat that step for later mappings.
 
-To write one mapping on Windows:
+## Program a key
+
+`savant` shows whether the pedal is connected, watches what a pedal types in everyday use, and writes one mapping at a time.
 
 1. Flip the pedal over. Use a pencil or paperclip to slide the recessed switch to **Program** (left). Unplug the USB cable, then plug it back in. The green LED should flash.
 2. Run `savant status` and confirm it reports Programming mode.
-3. Preview the mapping with no USB write:
+3. Preview the mapping with no write to the pedal:
 
    ```bash
    savant program --pedal a --action a --dry-run
@@ -52,34 +56,9 @@ To write one mapping on Windows:
    savant monitor
    ```
 
-`--dry-run` does not open USB. A real write requires `--yes`. There is no default write.
+`--dry-run` does not write to the pedal. A real write requires `--yes`. There is no default write.
 
-Preset apply and `savant config load` do not write the pedal. To change a pedal mapping, use `savant program`.
-
-## Get a Windows build
-
-You need a stable Rust toolchain. Then you can build `savant` from this repository:
-
-```bash
-git clone https://github.com/SamLeatherdale/savant-elite.git
-cd savant-elite
-cargo build --release
-```
-
-Or install the binary with Cargo:
-
-```bash
-cargo install --path .
-```
-
-After `cargo build --release`, the Windows binary is `target\release\savant.exe`. You can copy it onto your `PATH`.
-
-To publish a Windows ZIP without building on your machine, run the **Windows release** workflow from the Actions tab. Enter a tag such as `v0.4.0`. That run builds `savant.exe`, creates a GitHub Release for the tag, and attaches:
-
-- `savant-x86_64-pc-windows-msvc.zip`
-- `savant-x86_64-pc-windows-msvc.zip.sha256`
-
-The workflow does not run on every push to `main`. Pushing an annotated `v*` tag starts the same job. There is no automated installer.
+`savant preset` and `savant config` store names on disk only. To change a pedal mapping, use `savant program`.
 
 ## Install the programming driver once
 
@@ -88,7 +67,7 @@ Windows treats the pedal as two different devices:
 - **Play** (switch to the right) is everyday use. Windows already knows how to talk to this device. Leave that driver alone.
 - **Program** (switch to the left) is only for changing mappings. The first time Windows sees that device, you need to attach a programming driver.
 
-This repository does not install USB drivers. Download [Zadig](https://zadig.akeo.ie/) and attach the programming driver yourself. You do this once per computer.
+This tool does not install USB drivers. Download [Zadig](https://zadig.akeo.ie/) and attach the programming driver yourself. You do this once per computer.
 
 If you have never done this:
 
@@ -99,7 +78,7 @@ If you have never done this:
    - `05F3 0232` means Program. Continue.
    - `05F3 030C` means Play. Do not replace that driver with WinUSB. Slide the switch to **Program** (left), unplug the USB cable, plug it back in, then pick **Footpedal** again.
 5. Set the replacement driver to **WinUSB**, then choose **Replace Driver**.
-6. Confirm with `savant status` or `savant doctor`. It should report Programming mode.
+6. Confirm with `savant status`. It should report Programming mode.
 
 If you install WinUSB on the Play device (`030C`), `savant monitor` cannot read the pedal, and the pedals may stop typing keys in normal use.
 
@@ -114,42 +93,37 @@ The unit has a recessed Play / Program slide switch on the underside. After you 
 
 ## Commands
 
-These global flags apply to the `savant` binary:
+These flags apply to every `savant` command:
 
 | Flag | Purpose |
 | --- | --- |
-| `-v`, `--verbose` | Debug lines on stderr |
+| `-v`, `--verbose` | Extra detail on stderr |
 | `--json` | Machine-readable output on commands that support it |
-| `--timeout <MS>` | USB timeout, 100–600000 (default 500) |
+| `--timeout <MS>` | How long to wait for the pedal, 100–600000 (default 500) |
 
 ### `savant status`
 
-Reports whether a Savant Elite is visible and whether it is in Play or Programming mode.
+Reports whether a Savant Elite is visible and whether it is in Play or Program mode.
 
 ### `savant info`
 
-Lists matching HID and USB interfaces.
+Lists matching connections for the pedal.
 
 ### `savant monitor`
 
-Watches Play-mode pedal input. On Windows, this follows the everyday Play device and ignores the host keyboard.
+Watches Play-mode pedal taps. On Windows, this follows the everyday Play device and ignores the rest of the keyboard.
 
 ```bash
 savant monitor --duration 30
 ```
 
-On macOS, grant Input Monitoring to the terminal before you run `savant monitor`. That path is observation only.
-
 ### `savant program`
 
-Writes one mapping per run. Preview with `--dry-run` (no USB). A real write requires `--yes`.
+Writes one mapping per run. Preview with `--dry-run`. A real write requires `--yes`.
 
 Arguments:
 
-- `--pedal` — which pedal to change:
-  - `a`
-  - `b`
-  - `c`
+- `--pedal` — which pedal to change: `a`, `b`, or `c`
 - `--action` — what that pedal should send:
   - `clear` — remove that pedal's mapping
   - a single key, such as `a` or `right` (`right` is the Right Arrow key)
@@ -157,21 +131,27 @@ Arguments:
   - a mouse action: `left-click`, `right-click`, `middle-click`, `scroll-up`, or `scroll-down`
   - a chord of `[modifier+]key`, such as `ctrl+a`
   - a sequence of chords, separated by commas, such as `ctrl+a,b`
-- `--dry-run` — print the mapping and do not open USB
+- `--dry-run` — print the mapping and do not write
 - `--yes` — write the mapping to the pedal
 
-Modifiers you can put before a key:
+Join modifiers and a key with `+`. Put more than one modifier in front of the same key, still separated by `+`:
 
-- Left: `ctrl`, `shift`, `alt`, `gui` (and aliases)
-- Right: `rctrl`, `rshift`, `ralt`, `rgui`
+- `ctrl+a` — Control and A together
+- `ctrl+shift+a` — Control, Shift, and A together
+- `ctrl+alt+delete` — Control, Alt, and Delete together
+- `shift+alt+gui+s` — four modifiers and S
 
-Run `savant keys` for the names the encoder accepts.
+Order of the modifiers does not matter (`shift+ctrl+a` is the same as `ctrl+shift+a`). A comma starts a new tap, and later taps do not keep the earlier modifiers: `ctrl+a,b` is Control+A, then B by itself.
+
+A modifier with no key is allowed (`ctrl`). Combinations of modifiers with no key, such as `shift+alt`, are not.
+
+Left-side names: `ctrl`, `shift`, `alt`, `gui`. Right-side names: `rctrl`, `rshift`, `ralt`, `rgui`. Run `savant keys` for every accepted name.
 
 Examples:
 
 ```bash
 savant program --pedal a --action a --dry-run
-savant --json program --pedal a --action ctrl+a,b --dry-run
+savant --json program --pedal a --action ctrl+shift+a --dry-run
 savant program --pedal c --action right --dry-run
 savant program --pedal a --action left-click --dry-run
 savant program --pedal a --action clear --dry-run
@@ -182,9 +162,9 @@ After `--yes`, slide the switch to **Play** (right), unplug the USB cable, plug 
 
 ### `savant erase`
 
-Clears every pedal mapping in one write. This is a different USB request from `program` and is device-wide, so it is not a `--pedal` / `--action` flag.
+Clears every pedal mapping in one write.
 
-Preview with `--dry-run` (no USB). A real erase requires `--yes`.
+Preview with `--dry-run`. A real erase requires `--yes`.
 
 ```bash
 savant erase --dry-run
@@ -193,15 +173,15 @@ savant erase --yes
 
 ### `savant keys`
 
-Lists key names and modifier aliases the encoder accepts. `--json` is supported.
+Lists the key names and modifier aliases you can pass to `--action`.
 
 ### `savant doctor`
 
-Runs local diagnostics: binary, platform, device visibility, on-disk config, and Input Monitoring on macOS.
+Checks whether the computer can see the pedal and whether the programming driver is attached.
 
 ### `savant preset`
 
-Lists or shows built-in mapping names. `--list` and `--show` do not write the pedal. Applying a preset does not write the pedal. To write a mapping, use `savant program`.
+Lists or shows built-in mapping names. These commands do not write the pedal. To write a mapping, use `savant program`.
 
 ```bash
 savant preset --list
@@ -212,7 +192,7 @@ Shipped names: `copy-paste`, `undo-redo`, `browser`, `zoom`.
 
 ### `savant config`
 
-Saves, lists, and shows on-disk profiles. These commands do not write the pedal.
+Saves, lists, and shows named profiles on disk. These commands do not write the pedal.
 
 Replace `NAME` with the profile name:
 
@@ -222,33 +202,9 @@ savant config list
 savant config show NAME
 ```
 
-`savant config load` does not write the pedal. To write a mapping, use `savant program`.
-
-### `savant completions`
-
-Writes a clap completion script to stdout.
-
-```bash
-savant completions bash
-savant completions zsh
-savant completions fish
-savant completions powershell
-```
-
-## macOS
-
-macOS can build the CLI and run `status`, `info`, `monitor`, and `doctor`. Programming on macOS is unverified. There is no macOS installer.
-
-## Technical notes
-
-Install and everyday use stay in this README. Protocol notes and capture files are separate:
-
-- [RE_FINDINGS.md](RE_FINDINGS.md) — identity, transport, and protocol notes
-- [docs/evidence/captures/MANIFEST.md](docs/evidence/captures/MANIFEST.md) — capture catalog
-
 ## History
 
-Kinesis sold a USB foot controller built on PI Engineering X-keys hardware. The original Windows programmer did not survive modern 32-bit-app removals. This fork keeps a native Rust CLI for the first-generation learn-style units.
+Kinesis sold a USB foot controller built on PI Engineering X-keys hardware. The original Windows programmer did not survive on modern PCs. This tool is a replacement for first-generation learn-style units.
 
 ## License
 
