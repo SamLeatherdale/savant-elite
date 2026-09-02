@@ -16,6 +16,11 @@ last-touched
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
 
+# Embedded Dolt runtime and automatic migration snapshots
+embeddeddolt/
+backup/
+.auto-import-issues.jsonl
+
 # Legacy database files
 db.sqlite
 bd.db

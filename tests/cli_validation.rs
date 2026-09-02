@@ -24,7 +24,9 @@ fn cli_shows_help() {
         .stdout(predicate::str::contains("Kinesis Savant Elite"))
         .stdout(predicate::str::contains("program"))
         .stdout(predicate::str::contains("monitor"))
-        .stdout(predicate::str::contains("info"));
+        .stdout(predicate::str::contains("info"))
+        .stdout(predicate::str::contains("probe").not())
+        .stdout(predicate::str::contains("raw-cmd").not());
 }
 
 #[test]
@@ -42,305 +44,263 @@ fn cli_shows_subcommand_help() {
         .args(["program", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("--left"))
-        .stdout(predicate::str::contains("--middle"))
-        .stdout(predicate::str::contains("--right"))
-        .stdout(predicate::str::contains("--dry-run"));
+        .stdout(predicate::str::contains("--pedal"))
+        .stdout(predicate::str::contains("--action"))
+        .stdout(predicate::str::contains("--dry-run"))
+        .stdout(predicate::str::contains("--yes"))
+        .stdout(predicate::str::contains("--left").not())
+        .stdout(predicate::str::contains("--middle").not())
+        .stdout(predicate::str::contains("--right").not());
 }
 
 // ============================================================================
-// Valid Key Action Tests (dry-run mode, no device required)
+// Verified program path (dry-run, no device required)
 // ============================================================================
 
+const VERIFIED_MAPPINGS: [(&str, &str, &str); 6] = [
+    ("a", "a", "01 00 00 01 02 04 fe 04"),
+    ("a", "b", "01 00 00 01 02 05 fe 05"),
+    ("b", "a", "02 00 00 01 02 04 fe 04"),
+    ("a", "ctrl+a", "01 00 00 02 04 f0 04 fe 04 fe f0"),
+    ("a", "a,b", "01 00 00 06 00 04 fe 04 05 fe 05"),
+    ("a", "ctrl+a,b", "01 00 00 09 00 f0 04 fe 04 fe f0 05 fe 05"),
+];
+
 #[test]
-fn cli_accepts_valid_single_key() {
-    // Test single key without modifiers
+fn cli_program_requires_pedal_and_action() {
+    savant()
+        .args(["program", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--pedal"));
+}
+
+#[test]
+fn cli_program_rejects_obsolete_left_middle_right() {
     savant()
         .args(["program", "--left", "a", "--dry-run"])
         .assert()
-        .success();
-}
-
-#[test]
-fn cli_accepts_valid_modifier_key() {
-    // Test modifier+key combo
-    savant()
-        .args(["program", "--left", "cmd+c", "--dry-run"])
-        .assert()
-        .success();
-}
-
-#[test]
-fn cli_accepts_valid_multiple_modifiers() {
-    // Test multiple modifiers
-    savant()
-        .args(["program", "--left", "ctrl+shift+a", "--dry-run"])
-        .assert()
-        .success();
-}
-
-#[test]
-fn cli_accepts_all_pedals_custom() {
-    // Test all pedals with custom values
-    savant()
-        .args([
-            "program",
-            "--left",
-            "cmd+z",
-            "--middle",
-            "cmd+shift+z",
-            "--right",
-            "cmd+s",
-            "--dry-run",
-        ])
-        .assert()
-        .success();
-}
-
-#[test]
-fn cli_accepts_function_keys() {
-    savant()
-        .args(["program", "--left", "f1", "--dry-run"])
-        .assert()
-        .success();
-
-    savant()
-        .args(["program", "--left", "cmd+f12", "--dry-run"])
-        .assert()
-        .success();
-}
-
-#[test]
-fn cli_rejects_modifier_only() {
-    // Single modifier names like "ctrl" are not valid key actions
-    // They are interpreted as keys, and there is no key called "ctrl"
-    // To send a modifier, you need to combine it with a key (e.g., "ctrl+a")
-    savant()
-        .args(["program", "--left", "ctrl", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Unknown key"));
-
-    savant()
-        .args(["program", "--left", "shift", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Unknown key"));
-}
-
-// ============================================================================
-// Invalid Key Action Tests
-// ============================================================================
-
-#[test]
-fn cli_rejects_empty_left_pedal() {
-    savant()
-        .args(["program", "--left", "", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Key action cannot be empty"));
-}
-
-#[test]
-fn cli_rejects_empty_middle_pedal() {
-    savant()
-        .args(["program", "--middle", "", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Key action cannot be empty"));
-}
-
-#[test]
-fn cli_rejects_empty_right_pedal() {
-    savant()
-        .args(["program", "--right", "", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Key action cannot be empty"));
-}
-
-#[test]
-fn cli_rejects_whitespace_only_pedal() {
-    savant()
-        .args(["program", "--left", "   ", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Key action cannot be empty"));
-}
-
-#[test]
-fn cli_rejects_invalid_key() {
-    savant()
-        .args(["program", "--left", "notakey", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Unknown key"));
-}
-
-#[test]
-fn cli_rejects_invalid_modifier() {
-    savant()
-        .args(["program", "--left", "notamod+a", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Unknown modifier"));
-}
-
-#[test]
-fn cli_rejects_leading_plus() {
-    savant()
-        .args(["program", "--left", "+cmd+c", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("cannot start or end with '+'"));
-}
-
-#[test]
-fn cli_rejects_trailing_plus() {
-    savant()
-        .args(["program", "--left", "cmd+c+", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("cannot start or end with '+'"));
-}
-
-#[test]
-fn cli_rejects_consecutive_plus() {
-    savant()
-        .args(["program", "--left", "cmd++c", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("consecutive '+'"));
-}
-
-#[test]
-fn cli_rejects_only_plus() {
-    savant()
-        .args(["program", "--left", "+", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("cannot start or end with '+'"));
-}
-
-#[test]
-fn cli_rejects_multiple_plus_only() {
-    savant()
-        .args(["program", "--left", "+++", "--dry-run"])
-        .assert()
-        .failure();
-}
-
-#[test]
-fn cli_rejects_whitespace_between_plus() {
-    // "cmd + + c" has a whitespace-only component between the plus signs
-    savant()
-        .args(["program", "--left", "cmd + + c", "--dry-run"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("empty component"));
-}
-
-#[test]
-fn cli_accepts_multiple_modifiers() {
-    // Multiple modifiers should work
-    savant()
-        .args(["program", "--left", "ctrl+shift+alt+cmd+a", "--dry-run"])
-        .assert()
-        .success();
-}
-
-#[test]
-fn cli_accepts_modifier_aliases() {
-    // Various modifier aliases should all work
-    savant()
-        .args(["program", "--left", "command+a", "--dry-run"])
-        .assert()
-        .success();
-
-    savant()
-        .args(["program", "--left", "control+a", "--dry-run"])
-        .assert()
-        .success();
-
-    savant()
-        .args(["program", "--left", "option+a", "--dry-run"])
-        .assert()
-        .success();
-
-    savant()
-        .args(["program", "--left", "gui+a", "--dry-run"])
-        .assert()
-        .success();
-}
-
-// ============================================================================
-// Raw Command Tests
-// ============================================================================
-
-#[test]
-fn cli_raw_cmd_rejects_invalid_hex_cmd() {
-    // Invalid hex characters
-    savant()
-        .args(["raw-cmd", "--cmd", "zz"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Invalid command byte"));
-}
-
-#[test]
-fn cli_raw_cmd_rejects_invalid_hex_data() {
-    // Valid command but invalid data hex
-    savant()
-        .args(["raw-cmd", "--cmd", "b5", "--data", "gg"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Invalid data bytes"));
-}
-
-#[test]
-fn cli_raw_cmd_rejects_odd_length_hex() {
-    // Odd number of hex characters
-    savant()
-        .args(["raw-cmd", "--cmd", "b5", "--data", "001"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Invalid hex").or(predicate::str::contains("Odd")));
-}
-
-#[test]
-fn cli_raw_cmd_rejects_negative_interface() {
-    // Negative interface number should be rejected by clap's value_parser
-    // Clap treats "-1" as an unknown flag, so it says "unexpected argument"
-    savant()
-        .args(["raw-cmd", "--cmd", "b5", "--interface", "-1"])
-        .assert()
         .failure()
         .stderr(
-            predicate::str::contains("unexpected argument")
-                .or(predicate::str::contains("invalid value")),
+            predicate::str::contains("unexpected argument").or(predicate::str::contains("--left")),
         );
 }
 
 #[test]
-fn cli_raw_cmd_rejects_interface_too_large() {
-    // Interface number > 255 should be rejected
-    savant()
-        .args(["raw-cmd", "--cmd", "b5", "--interface", "256"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("invalid value"));
+fn cli_program_dry_run_all_verified_mappings() {
+    for (pedal, action, payload) in VERIFIED_MAPPINGS {
+        savant()
+            .env("SAVANT_FAIL_ON_USB", "1")
+            .args([
+                "-v",
+                "program",
+                "--pedal",
+                pedal,
+                "--action",
+                action,
+                "--dry-run",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("PREVIEW ONLY"))
+            .stdout(predicate::str::contains("Nothing was written"))
+            .stdout(predicate::str::contains("bmRequestType").not())
+            .stdout(predicate::str::contains("bytes_written").not())
+            .stderr(predicate::str::contains("bmRequestType"))
+            .stderr(predicate::str::contains("0x42"))
+            .stderr(predicate::str::contains("Out/Vendor/Endpoint"))
+            .stderr(predicate::str::contains("bRequest"))
+            .stderr(predicate::str::contains("wValue"))
+            .stderr(predicate::str::contains("wIndex"))
+            .stderr(predicate::str::contains(payload));
+    }
 }
 
 #[test]
-fn cli_raw_cmd_rejects_data_too_long() {
-    // Data exceeding 34 bytes should be rejected
-    // 35 bytes = 70 hex chars
-    let long_data = "00".repeat(35);
+fn cli_program_dry_run_json_is_machine_checkable() {
+    let output = savant()
+        .env("SAVANT_FAIL_ON_USB", "1")
+        .args([
+            "--json",
+            "program",
+            "--pedal",
+            "a",
+            "--action",
+            "a",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output).expect("program --json --dry-run should be valid JSON");
+    assert_eq!(json.get("dry_run").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(json.get("wrote").and_then(|v| v.as_bool()), Some(false));
+    assert_eq!(json.get("pedal").and_then(|v| v.as_str()), Some("a"));
+    assert_eq!(json.get("action").and_then(|v| v.as_str()), Some("a"));
+    assert_eq!(
+        json.get("payload_hex").and_then(|v| v.as_str()),
+        Some("010000010204fe04")
+    );
+    let setup = json.get("setup").expect("setup object");
+    assert_eq!(
+        setup.get("bmRequestType").and_then(|v| v.as_str()),
+        Some("0x42")
+    );
+    assert_eq!(setup.get("direction").and_then(|v| v.as_str()), Some("Out"));
+    assert_eq!(setup.get("type").and_then(|v| v.as_str()), Some("Vendor"));
+    assert_eq!(
+        setup.get("recipient").and_then(|v| v.as_str()),
+        Some("Endpoint")
+    );
+    assert_eq!(setup.get("bRequest").and_then(|v| v.as_u64()), Some(6));
+    assert_eq!(setup.get("wValue").and_then(|v| v.as_u64()), Some(0));
+    assert_eq!(setup.get("wIndex").and_then(|v| v.as_u64()), Some(0));
+    assert_eq!(setup.get("wLength").and_then(|v| v.as_u64()), Some(8));
+}
+
+#[test]
+fn cli_program_dry_run_does_not_enumerate_usb() {
     savant()
-        .args(["raw-cmd", "--cmd", "b5", "--data", &long_data])
+        .env("SAVANT_FAIL_ON_USB", "1")
+        .args(["program", "--pedal", "a", "--action", "a", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing was written"));
+}
+
+#[test]
+fn cli_program_missing_yes_refuses_write_without_usb() {
+    savant()
+        .env("SAVANT_FAIL_ON_USB", "1")
+        .args(["program", "--pedal", "a", "--action", "a"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("exceeds maximum"));
+        .stderr(predicate::str::contains("Refusing to write without --yes"));
+}
+
+#[test]
+fn cli_program_dry_run_extended_mappings() {
+    let rows = [
+        ("c", "a", "03 00 00 01 02 04 fe 04"),
+        ("a", "clear", "01 00 00 00 00"),
+        ("a", "a,b,c", "01 00 00 09 00 04 fe 04 05 fe 05 06 fe 06"),
+        (
+            "a",
+            "shift+a,b",
+            "01 00 00 09 00 f1 04 fe 04 fe f1 05 fe 05",
+        ),
+        ("a", "f1", "01 00 00 01 02 3a fe 3a"),
+        ("a", "f12", "01 00 00 01 02 45 fe 45"),
+        ("a", "pause", "01 00 00 01 02 48 fe 48"),
+        ("a", "rctrl+a", "01 00 00 02 04 f4 04 fe 04 fe f4"),
+        ("b", "b", "02 00 00 01 02 05 fe 05"),
+    ];
+    for (pedal, action, payload) in rows {
+        savant()
+            .env("SAVANT_FAIL_ON_USB", "1")
+            .args([
+                "-v",
+                "program",
+                "--pedal",
+                pedal,
+                "--action",
+                action,
+                "--dry-run",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("PREVIEW ONLY"))
+            .stdout(predicate::str::contains(payload).not())
+            .stderr(predicate::str::contains(payload));
+    }
+}
+
+#[test]
+fn cli_program_rejects_malformed_and_consumer_mappings() {
+    savant()
+        .env("SAVANT_FAIL_ON_USB", "1")
+        .args(["program", "--pedal", "a", "--action", "play", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("consumer")
+                .or(predicate::str::contains("media"))
+                .or(predicate::str::contains("out of scope")),
+        );
+
+    savant()
+        .env("SAVANT_FAIL_ON_USB", "1")
+        .args(["program", "--pedal", "a", "--action", "mute", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("consumer")
+                .or(predicate::str::contains("media"))
+                .or(predicate::str::contains("out of scope")),
+        );
+
+    savant()
+        .env("SAVANT_FAIL_ON_USB", "1")
+        .args([
+            "program",
+            "--pedal",
+            "a",
+            "--action",
+            "clear,a",
+            "--dry-run",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("clear"));
+
+    savant()
+        .env("SAVANT_FAIL_ON_USB", "1")
+        .args(["program", "--pedal", "d", "--action", "a", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unsupported pedal"));
+}
+
+#[test]
+fn cli_program_rejects_f13_f24_before_usb() {
+    for action in ["f13", "f24", "F24", "rctrl+f24", "a,f13"] {
+        savant()
+            .env("SAVANT_FAIL_ON_USB", "1")
+            .args(["program", "--pedal", "a", "--action", action, "--dry-run"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("Device limitation"))
+            .stderr(predicate::str::contains("F13-F24"))
+            .stderr(predicate::str::contains("no Play event"));
+    }
+}
+
+// ============================================================================
+// Removed reverse-engineering commands
+// ============================================================================
+
+#[test]
+fn cli_probe_is_removed() {
+    savant().arg("probe").assert().failure().stderr(
+        predicate::str::contains("unrecognized subcommand")
+            .or(predicate::str::contains("invalid subcommand")),
+    );
+}
+
+#[test]
+fn cli_raw_cmd_is_removed() {
+    savant()
+        .args(["raw-cmd", "--cmd", "b5"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("unrecognized subcommand")
+                .or(predicate::str::contains("invalid subcommand")),
+        );
 }
 
 // ============================================================================
@@ -421,6 +381,9 @@ fn cli_keys_shows_all_categories() {
         .stdout(predicate::str::contains("LETTERS"))
         .stdout(predicate::str::contains("NUMBERS"))
         .stdout(predicate::str::contains("FUNCTION KEYS"))
+        .stdout(predicate::str::contains("f12"))
+        .stdout(predicate::str::contains("f13").not())
+        .stdout(predicate::str::contains("f24").not())
         .stdout(predicate::str::contains("SPECIAL KEYS"))
         .stdout(predicate::str::contains("ARROW KEYS"))
         .stdout(predicate::str::contains("PUNCTUATION"))
@@ -554,12 +517,20 @@ fn cli_verbose_shows_mode_enabled() {
 
 #[test]
 fn cli_verbose_with_dry_run() {
-    // Verbose mode should work with dry-run
     savant()
-        .args(["-v", "program", "--left", "a", "--dry-run"])
+        .env("SAVANT_FAIL_ON_USB", "1")
+        .args([
+            "-v",
+            "program",
+            "--pedal",
+            "a",
+            "--action",
+            "a",
+            "--dry-run",
+        ])
         .assert()
         .success()
-        .stderr(predicate::str::contains("Parsing left pedal action"));
+        .stderr(predicate::str::contains("Validating programming mapping"));
 }
 
 // ============================================================================
@@ -664,7 +635,10 @@ fn cli_preset_list_shows_all_presets() {
         .stdout(predicate::str::contains("copy-paste"))
         .stdout(predicate::str::contains("undo-redo"))
         .stdout(predicate::str::contains("browser"))
-        .stdout(predicate::str::contains("zoom"));
+        .stdout(predicate::str::contains("zoom"))
+        .stdout(predicate::str::contains("Apply the copy-paste").not())
+        .stdout(predicate::str::contains("preset browser --dry-run").not())
+        .stdout(predicate::str::contains("savant program --pedal"));
 }
 
 #[test]
@@ -706,9 +680,8 @@ fn cli_preset_show_displays_details() {
         .assert()
         .success()
         .stdout(predicate::str::contains("PRESET: COPY-PASTE"))
-        // Visualization shows formatted keys (⌘C instead of cmd+c)
         .stdout(predicate::str::contains(
-            "To apply: savant preset copy-paste",
+            "savant program --pedal a --action a --dry-run",
         ));
 }
 
@@ -748,7 +721,8 @@ fn cli_preset_missing_name_shows_usage() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Missing preset name"))
-        .stdout(predicate::str::contains("savant preset --list"));
+        .stdout(predicate::str::contains("savant preset --list"))
+        .stdout(predicate::str::contains("does not write the pedal"));
 }
 
 #[test]
@@ -759,19 +733,39 @@ fn cli_preset_help() {
         .success()
         .stdout(predicate::str::contains("--list"))
         .stdout(predicate::str::contains("--show"))
-        .stdout(predicate::str::contains("--dry-run"))
-        .stdout(predicate::str::contains("preset configuration"));
+        .stdout(predicate::str::contains("does not write"))
+        .stdout(predicate::str::contains("savant program"))
+        .stdout(predicate::str::contains("Apply a preset").not())
+        .stdout(predicate::str::contains("without applying").not());
 }
 
 #[test]
-fn cli_preset_dry_run_works() {
-    // --dry-run should show configuration without error (device mode check happens later)
+fn cli_preset_apply_is_unsupported() {
     savant()
         .args(["preset", "browser", "--dry-run"])
         .assert()
-        .success()
-        // Visualization shows formatted keys - just verify it shows the pedal visualization
-        .stdout(predicate::str::contains("YOUR PEDAL CONFIGURATION"));
+        .failure()
+        .stderr(predicate::str::contains("does not write the pedal"))
+        .stderr(predicate::str::contains("savant program --pedal"));
+}
+
+#[test]
+fn cli_preset_apply_without_flags_is_unsupported() {
+    savant()
+        .args(["preset", "copy-paste"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("does not write the pedal"))
+        .stderr(predicate::str::contains("savant program --pedal"));
+}
+
+#[test]
+fn cli_config_load_is_unsupported() {
+    savant()
+        .args(["config", "load", "nonexistent-profile-xyz"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("not found"));
 }
 
 // ============================================================================
@@ -900,7 +894,8 @@ fn cli_config_load_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("--dry-run"))
-        .stdout(predicate::str::contains("Preview"));
+        .stdout(predicate::str::contains("does not write the pedal"))
+        .stdout(predicate::str::contains("programs device").not());
 }
 
 #[test]
@@ -949,10 +944,61 @@ fn cli_doctor_checks_platform() {
         .clone();
     let stdout = String::from_utf8_lossy(&output);
     assert!(
-        stdout.contains("macOS detected") || stdout.contains("linux detected"),
+        stdout.contains("macOS detected")
+            || stdout.contains("Windows detected")
+            || stdout.contains("linux detected"),
         "Expected platform detection message in stdout: {}",
         stdout
     );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn cli_doctor_windows_platform_is_supported() {
+    let output = savant()
+        .args(["--json", "doctor"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output).expect("doctor --json should produce valid JSON");
+    let checks = json
+        .get("checks")
+        .and_then(|value| value.as_array())
+        .expect("doctor JSON should include checks");
+    let platform = checks
+        .iter()
+        .find(|check| check.get("name").and_then(|name| name.as_str()) == Some("platform"))
+        .expect("doctor JSON should include a platform check");
+
+    assert_eq!(
+        platform.get("status").and_then(|status| status.as_str()),
+        Some("pass")
+    );
+    let message = platform
+        .get("message")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    assert!(message.contains("Windows detected"));
+    assert!(message.contains("supported"));
+    assert!(!message.contains("unsupported"));
+
+    let suggestions = platform
+        .get("suggestions")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let joined = suggestions
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(joined.contains("05F3:0232"));
+    assert!(joined.contains("05F3:030C"));
+    assert!(joined.contains("Never bind Play PID"));
 }
 
 #[test]
@@ -1260,7 +1306,10 @@ fn cli_config_restore_shows_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Backup number"))
-        .stdout(predicate::str::contains("--apply"));
+        .stdout(predicate::str::contains("--apply"))
+        .stdout(predicate::str::contains("does not write the pedal"))
+        .stdout(predicate::str::contains("savant program"))
+        .stdout(predicate::str::contains("Program device immediately").not());
 }
 
 #[test]

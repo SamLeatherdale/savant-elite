@@ -7,3 +7,5 @@
 
 # Manual E2E test logs
 /tests/logs/
+
+.cursor/plans

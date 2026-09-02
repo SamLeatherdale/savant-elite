@@ -46,7 +46,7 @@ fi
 test_end pass "--version"
 
 # Test: All subcommand help
-SUBCOMMANDS="program monitor status info probe keys preset config doctor completions"
+SUBCOMMANDS="program monitor status info keys preset config doctor completions"
 for cmd in $SUBCOMMANDS; do
     test_start "Subcommand help: $cmd"
     if $SAVANT $cmd --help >/dev/null 2>&1; then

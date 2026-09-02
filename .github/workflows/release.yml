@@ -1,222 +1,124 @@
-name: Release
+# Publishes a Windows GitHub Release (ZIP + SHA-256).
+# Run from Actions "Run workflow", or by pushing an annotated v* tag.
+# Does not run on every push to main. Never sends USB writes.
+name: Windows release
 
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g., v1.0.0)'
+        description: >-
+          Release tag (e.g. v0.3.0). Created at this run's commit if it does
+          not already exist on the remote.
         required: true
         type: string
+      prerelease:
+        description: Mark the GitHub Release as a prerelease
+        required: false
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false  # Never cancel releases
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
-  id-token: write
-  attestations: write
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: savant
 
 jobs:
-  build:
-    name: Build ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
+  windows:
+    name: Publish Windows GitHub Release
+    runs-on: windows-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # macOS Apple Silicon (native ARM64)
-          - os: macos-14
-            target: aarch64-apple-darwin
-            artifact: savant
-            asset_name: savant-darwin-arm64
-          # macOS Intel (x86_64)
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact: savant
-            asset_name: savant-darwin-amd64
     steps:
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          key: release-${{ matrix.target }}
 
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: Release build
+        run: cargo build --release
 
-      - name: Verify binary
+      - name: Verify CLI without hardware
         run: |
-          file target/${{ matrix.target }}/release/${{ matrix.artifact }}
-          target/${{ matrix.target }}/release/${{ matrix.artifact }} --version || true
+          .\target\release\savant.exe --version
+          .\target\release\savant.exe --help
 
-      - name: Create tarball
+      - name: Package ZIP and SHA-256
+        shell: pwsh
         run: |
-          mkdir -p dist
-          cd target/${{ matrix.target }}/release
-
-          # Create tarball with binary + docs
-          tar -cJf ../../../dist/${{ matrix.asset_name }}.tar.xz \
-            ${{ matrix.artifact }}
-
-          cd ../../../dist
-
-          # Generate SHA256 checksum
-          shasum -a 256 "${{ matrix.asset_name }}.tar.xz" > "${{ matrix.asset_name }}.tar.xz.sha256"
-
-          echo "Created artifacts:"
-          ls -la
+          $pkg = "target\manual-release"
+          New-Item -ItemType Directory -Force $pkg | Out-Null
+          Copy-Item -Force target\release\savant.exe, README.md, LICENSE $pkg\
+          $zipName = "savant-x86_64-pc-windows-msvc.zip"
+          Compress-Archive -Force `
+            -Path $pkg\savant.exe, $pkg\README.md, $pkg\LICENSE `
+            -DestinationPath (Join-Path $pkg $zipName)
+          $zip = Get-Item (Join-Path $pkg $zipName)
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText((Join-Path $pkg "$zipName.sha256"), "$hash  $zipName`n")
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: dist/*
-          retention-days: 5
+          name: savant-x86_64-pc-windows-msvc
+          path: |
+            target/manual-release/savant-x86_64-pc-windows-msvc.zip
+            target/manual-release/savant-x86_64-pc-windows-msvc.zip.sha256
+          retention-days: 7
 
-  checksums:
-    name: Generate Checksums
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Generate combined checksums
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_PROMPT_DISABLED: "1"
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          RELEASE_PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
+        shell: pwsh
         run: |
-          cd artifacts
-          echo "Individual checksums:"
-          cat *.sha256
+          $tag = $env:RELEASE_TAG.Trim()
+          if ($tag -notmatch '^v') {
+            throw "Release tag must start with 'v' (got '$tag')."
+          }
 
-          echo ""
-          echo "Generating combined SHA256SUMS..."
+          $pkg = "target\manual-release"
+          $zip = Join-Path $pkg "savant-x86_64-pc-windows-msvc.zip"
+          $sha = Join-Path $pkg "savant-x86_64-pc-windows-msvc.zip.sha256"
+          if (-not (Test-Path -LiteralPath $zip) -or -not (Test-Path -LiteralPath $sha)) {
+            throw "Expected ZIP and SHA-256 files are missing."
+          }
 
-          # Create combined checksum file
-          cat *.sha256 | sort > SHA256SUMS
+          $PSNativeCommandUseErrorActionPreference = $false
 
-          echo ""
-          echo "SHA256SUMS contents:"
-          cat SHA256SUMS
+          function Upload-Assets {
+            gh release upload $tag $zip $sha --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "gh release upload failed for $tag"
+            }
+          }
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: checksums
-          path: artifacts/SHA256SUMS
-
-  release:
-    name: Create Release
-    needs: [build, checksums]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: List release artifacts
-        run: |
-          echo "Release artifacts:"
-          ls -la dist/
-
-      - name: Extract version
-        id: version
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ github.event.inputs.tag }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "version_num=${VERSION#v}" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-
-      - name: Generate attestation
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: dist/*.tar.xz
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: ${{ steps.version.outputs.version }}
-          draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
-          generate_release_notes: true
-          files: |
-            dist/*.tar.xz
-            dist/*.sha256
-            dist/SHA256SUMS
-          body: |
-            ## Installation
-
-            ### macOS (Apple Silicon)
-            ```bash
-            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/savant-darwin-arm64.tar.xz | tar -xJ
-            sudo mv savant /usr/local/bin/
-            ```
-
-            ### macOS (Intel)
-            ```bash
-            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/savant-darwin-amd64.tar.xz | tar -xJ
-            sudo mv savant /usr/local/bin/
-            ```
-
-            ### Verify Checksums
-            ```bash
-            ASSET=savant-darwin-arm64.tar.xz  # or: savant-darwin-amd64.tar.xz
-            curl -fsSL "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/${ASSET}" -o "${ASSET}"
-            curl -fsSL "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/SHA256SUMS" -o SHA256SUMS
-            shasum -a 256 -c SHA256SUMS --ignore-missing
-            ```
-
-            ## What's Changed
-
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-
-  verify:
-    name: Verify Release
-    needs: release
-    runs-on: macos-14
-    timeout-minutes: 10
-    steps:
-      - name: Download and verify
-        run: |
-          VERSION="${{ needs.release.outputs.version }}"
-
-          echo "Downloading release artifacts..."
-          ASSET=savant-darwin-arm64.tar.xz
-          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/${VERSION}/${ASSET}" -o "${ASSET}"
-          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/${VERSION}/${ASSET}.sha256" -o "${ASSET}.sha256"
-
-          echo "Verifying checksum..."
-          shasum -a 256 -c "${ASSET}.sha256"
-
-          echo "Extracting..."
-          tar -xJf "${ASSET}"
-
-          echo "Testing binary..."
-          ./savant --help
-
-          echo "Release verification complete!"
+          gh release view $tag --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Upload-Assets
+          } else {
+            $createArgs = @(
+              $tag,
+              $zip,
+              $sha,
+              "--title", $tag,
+              "--generate-notes",
+              "--target", $env:GITHUB_SHA
+            )
+            if ($env:RELEASE_PRERELEASE -eq "true") {
+              $createArgs += "--prerelease"
+            }
+            gh release create @createArgs
+            if ($LASTEXITCODE -ne 0) {
+              Upload-Assets
+            }
+          }

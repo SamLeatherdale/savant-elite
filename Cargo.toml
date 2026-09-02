@@ -2,11 +2,12 @@
 name = "savant-elite"
 version = "0.2.0"
 edition = "2021"
-description = "Kinesis Savant Elite foot pedal programmer for macOS"
-license = "MIT"
-repository = "https://github.com/Dicklesworthstone/savant-elite"
+description = "Windows-first cross-platform Rust CLI for the Kinesis Savant Elite / X-keys USB foot pedal"
+license-file = "LICENSE"
+repository = "https://github.com/SamLeatherdale/savant-elite"
+homepage = "https://github.com/SamLeatherdale/savant-elite"
 readme = "README.md"
-keywords = ["kinesis", "foot-pedal", "usb", "hid", "macos"]
+keywords = ["kinesis", "foot-pedal", "usb", "hid", "windows"]
 categories = ["command-line-utilities", "hardware-support"]
 
 [dependencies]
@@ -29,6 +30,13 @@ predicates = "3"
 tempfile = "3"
 serde_json = "1"
 
+[lib]
+name = "savant_elite"
+path = "src/lib.rs"
+
 [[bin]]
 name = "savant"
 path = "src/main.rs"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_Input", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_System_Console", "Win32_Graphics_Gdi"] }
