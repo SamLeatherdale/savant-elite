@@ -23,6 +23,7 @@ fn cli_shows_help() {
         .success()
         .stdout(predicate::str::contains("Kinesis Savant Elite"))
         .stdout(predicate::str::contains("program"))
+        .stdout(predicate::str::contains("erase"))
         .stdout(predicate::str::contains("monitor"))
         .stdout(predicate::str::contains("info"))
         .stdout(predicate::str::contains("probe").not())
@@ -198,6 +199,10 @@ fn cli_program_dry_run_extended_mappings() {
         ("a", "pause", "01 00 00 01 02 48 fe 48"),
         ("a", "rctrl+a", "01 00 00 02 04 f4 04 fe 04 fe f4"),
         ("b", "b", "02 00 00 01 02 05 fe 05"),
+        ("a", "left-click", "01 20 00 04 00 01 00 00 00"),
+        ("b", "right-click", "02 20 00 04 00 02 00 00 00"),
+        ("c", "middle-click", "03 20 00 04 00 04 00 00 00"),
+        ("c", "ctrl", "03 00 00 01 02 f0 fe f0"),
     ];
     for (pedal, action, payload) in rows {
         savant()
@@ -263,6 +268,50 @@ fn cli_program_rejects_malformed_and_consumer_mappings() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("Unsupported pedal"));
+
+    savant()
+        .env("SAVANT_FAIL_ON_USB", "1")
+        .args([
+            "program",
+            "--pedal",
+            "a",
+            "--action",
+            "left-click,a",
+            "--dry-run",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Mouse"));
+}
+
+#[test]
+fn cli_erase_dry_run_and_refuses_without_yes() {
+    savant()
+        .env("SAVANT_FAIL_ON_USB", "1")
+        .args(["-v", "erase", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PREVIEW ONLY"))
+        .stdout(predicate::str::contains("every pedal"))
+        .stderr(predicate::str::contains("08"));
+
+    savant()
+        .env("SAVANT_FAIL_ON_USB", "1")
+        .args(["erase"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Refusing to erase without --yes"));
+}
+
+#[test]
+fn cli_erase_help() {
+    savant()
+        .args(["erase", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--dry-run"))
+        .stdout(predicate::str::contains("--yes"))
+        .stdout(predicate::str::contains("--pedal").not());
 }
 
 #[test]
@@ -387,6 +436,8 @@ fn cli_keys_shows_all_categories() {
         .stdout(predicate::str::contains("SPECIAL KEYS"))
         .stdout(predicate::str::contains("ARROW KEYS"))
         .stdout(predicate::str::contains("PUNCTUATION"))
+        .stdout(predicate::str::contains("MOUSE"))
+        .stdout(predicate::str::contains("left-click"))
         .stdout(predicate::str::contains("EXAMPLES"));
 }
 
@@ -410,6 +461,7 @@ fn cli_keys_json_is_valid() {
         "JSON should have modifiers"
     );
     assert!(json.get("keys").is_some(), "JSON should have keys");
+    assert!(json.get("mouse").is_some(), "JSON should have mouse");
 }
 
 #[test]

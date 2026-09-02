@@ -8,10 +8,10 @@ use serde::Serialize;
 use std::time::Duration;
 
 use crate::config::PedalConfig;
-use crate::protocol::{Pedal, KINESIS_VID, PROGRAMMING_PID, SAVANT_ELITE_PID};
+use crate::protocol::{Pedal, ProgramAction, KINESIS_VID, PROGRAMMING_PID, SAVANT_ELITE_PID};
 use crate::transport::{
-    new_hid_api, prepare_program, write_programming_request6, PreparedProgram,
-    DEFAULT_USB_TIMEOUT_MS,
+    new_hid_api, prepare_erase, prepare_program, write_programming_request6,
+    write_programming_request8, PreparedErase, PreparedProgram, DEFAULT_USB_TIMEOUT_MS,
 };
 
 // JSON output structures for --json flag
@@ -199,6 +199,19 @@ pub(crate) struct JsonProgramOutput {
     pub confirmation: Option<String>,
 }
 
+#[derive(Serialize)]
+pub(crate) struct JsonEraseOutput {
+    pub dry_run: bool,
+    pub wrote: bool,
+    pub setup: JsonProgramSetup,
+    pub payload_hex: String,
+    pub payload: Vec<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes_written: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirmation: Option<String>,
+}
+
 #[derive(Parser)]
 #[command(name = "savant")]
 #[command(version)]
@@ -241,7 +254,7 @@ pub enum Commands {
         #[arg(long, value_name = "a|b|c")]
         pedal: String,
 
-        /// Action: comma-separated chords (`a`, `ctrl+a`, `a,b`) or `clear`
+        /// Action: key chords (`a`, `ctrl+a`, `a,b`), one modifier (`ctrl`), mouse (`left-click`), or `clear`
         #[arg(long, value_name = "ACTION")]
         action: String,
 
@@ -250,6 +263,17 @@ pub enum Commands {
         dry_run: bool,
 
         /// Confirm a real write (required; there is no default write)
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Erase every pedal mapping (requires Programming mode)
+    Erase {
+        /// Preview the erase without writing to the pedal
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Confirm a real erase (required; there is no default write)
         #[arg(long)]
         yes: bool,
     },
@@ -986,6 +1010,7 @@ impl SavantElite {
         struct KeysOutput {
             modifiers: Vec<ModifierInfo>,
             keys: KeyCategories,
+            mouse: Vec<&'static str>,
         }
 
         #[derive(Serialize)]
@@ -1133,6 +1158,14 @@ impl SavantElite {
 
         let arrow_keys: Vec<&'static str> = vec!["up", "down", "left", "right"];
 
+        let mouse: Vec<&'static str> = vec![
+            "left-click",
+            "right-click",
+            "middle-click",
+            "scroll-up",
+            "scroll-down",
+        ];
+
         let punctuation = vec![
             KeyAliases {
                 names: vec!["minus", "-"],
@@ -1180,6 +1213,7 @@ impl SavantElite {
                     arrow_keys,
                     punctuation,
                 },
+                mouse,
             };
             println!("{}", serde_json::to_string_pretty(&output)?);
         } else {
@@ -1236,14 +1270,27 @@ impl SavantElite {
             }
 
             self.console.print("");
+            self.console.print("[bold cyan]MOUSE[/]");
+            self.console
+                .print(&format!("  [green]{}[/]", mouse.join("  ")));
+            self.console.print(
+                "  [dim]Use these names alone. right is the Right Arrow key; right-click is the mouse button.[/]",
+            );
+
+            self.console.print("");
             self.console.print("[bold cyan]HOW TO WRITE A MAPPING[/]");
             self.console.print(
                 "  [dim]Pedals a, b, or c. Combine modifiers with + (ctrl+a). Sequences are comma-separated (a,b).[/]",
             );
             self.console
+                .print("  [dim]A single modifier with no key is allowed (ctrl). Combinations such as shift+alt are not.[/]");
+            self.console
                 .print("  [dim]clear removes that pedal's mapping and cannot be combined with other keys.[/]");
             self.console.print(
-                "  [dim]Standard keyboard keys only — no media keys, mouse buttons, or delays.[/]",
+                "  [dim]savant erase --dry-run previews a device-wide wipe of every pedal. Add --yes only to erase.[/]",
+            );
+            self.console.print(
+                "  [dim]No media keys, delays, or repeats. Mouse clicks use the names above, not mouse or click.[/]",
             );
             self.console
                 .print("  [dim]F1-F12 work. F13-F24 are a device limitation (the write may succeed, but the pedal will not send those keys).[/]");
@@ -1257,7 +1304,10 @@ impl SavantElite {
             self.console
                 .print("  [yellow]savant program --pedal c --action ctrl+a,b --dry-run[/]");
             self.console
+                .print("  [yellow]savant program --pedal a --action left-click --dry-run[/]");
+            self.console
                 .print("  [yellow]savant program --pedal a --action clear --dry-run[/]");
+            self.console.print("  [yellow]savant erase --dry-run[/]");
         }
 
         Ok(())
@@ -1307,7 +1357,17 @@ impl SavantElite {
 
         let setup = planned.setup;
         let payload_hex = hex::encode(&planned.payload);
-        let confirmation = "Now switch to Play, unplug, replug, and tap the pedal (for example with savant monitor).";
+        let confirmation = match planned.action {
+            ProgramAction::Mouse(_) => {
+                "Now switch to Play, unplug, replug, and tap the pedal. Watch the mouse pointer; savant monitor only shows keyboard keys."
+            }
+            ProgramAction::ModifierOnly(_) => {
+                "Now switch to Play, unplug, replug, and tap the pedal. A modifier-only mapping does not type a character by itself."
+            }
+            _ => {
+                "Now switch to Play, unplug, replug, and tap the pedal (for example with savant monitor)."
+            }
+        };
 
         let json = |wrote: bool, bytes_written: Option<usize>| JsonProgramOutput {
             dry_run,
@@ -1383,6 +1443,92 @@ impl SavantElite {
         Ok(())
     }
 
+    pub(crate) fn erase(&self, dry_run: bool, yes: bool) -> Result<()> {
+        self.verbose("Validating device-wide erase");
+        let planned = prepare_erase();
+        self.verbose(&format!(
+            "Encoded erase request {} ({} bytes)",
+            planned.setup.b_request,
+            planned.payload.len()
+        ));
+
+        let setup = planned.setup;
+        let payload_hex = hex::encode(&planned.payload);
+        let confirmation =
+            "All pedal mappings are now blank. Switch to Play, unplug, replug, and tap each pedal.";
+
+        let json = |wrote: bool, bytes_written: Option<usize>| JsonEraseOutput {
+            dry_run,
+            wrote,
+            setup: JsonProgramSetup {
+                bm_request_type: format!("0x{:02X}", setup.bm_request_type),
+                direction: "Out".to_string(),
+                transfer_type: "Vendor".to_string(),
+                recipient: "Endpoint".to_string(),
+                b_request: setup.b_request,
+                w_value: setup.w_value,
+                w_index: setup.w_index,
+                w_length: planned.payload.len(),
+            },
+            payload_hex: payload_hex.clone(),
+            payload: planned.payload.clone(),
+            bytes_written,
+            confirmation: if wrote {
+                Some(confirmation.to_string())
+            } else {
+                None
+            },
+        };
+
+        if dry_run {
+            if self.json_output {
+                println!("{}", serde_json::to_string_pretty(&json(false, None))?);
+                return Ok(());
+            }
+
+            self.print_banner();
+            self.console
+                .print("[bold #f39c12]PREVIEW ONLY[/] [bold white]Nothing was written[/]");
+            self.console.print("");
+            self.print_erase_summary(&planned);
+            self.print_erase_transfer(&planned);
+            self.console.print("");
+            self.console
+                .print("  Add [bold #f1c40f]--yes[/] to erase every pedal mapping.");
+            self.console.print("");
+            return Ok(());
+        }
+
+        if !yes {
+            return Err(anyhow!(
+                "Refusing to erase without --yes. Preview with --dry-run, or pass --yes to erase every pedal mapping."
+            ));
+        }
+
+        self.verbose("Opening the Programming-mode pedal for one erase");
+        let bytes_written = write_programming_request8(&planned.payload, self.timeout_ms)
+            .with_context(|| "Erase write failed")?;
+        self.verbose(&format!("bytes_written {bytes_written}"));
+
+        if self.json_output {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json(true, Some(bytes_written)))?
+            );
+            return Ok(());
+        }
+
+        self.print_banner();
+        self.console.print("[bold #2ecc71]Erased all mappings[/]");
+        self.console.print("");
+        self.print_erase_summary(&planned);
+        self.print_erase_transfer(&planned);
+        self.console.print("");
+        self.console.print(&format!("  {}", confirmation));
+        self.console.print("");
+        Ok(())
+    }
+
     fn pedal_owner_label(pedal: Pedal) -> &'static str {
         match pedal {
             Pedal::A => "A (left)",
@@ -1408,6 +1554,32 @@ impl SavantElite {
             .join(" ");
         self.verbose(&format!("pedal {}", planned.pedal));
         self.verbose(&format!("action {}", planned.action));
+        self.verbose(&format!(
+            "bmRequestType 0x{:02X} (Out/Vendor/Endpoint)",
+            planned.setup.bm_request_type
+        ));
+        self.verbose(&format!("bRequest {}", planned.setup.b_request));
+        self.verbose(&format!("wValue {}", planned.setup.w_value));
+        self.verbose(&format!("wIndex {}", planned.setup.w_index));
+        self.verbose(&format!("wLength {}", payload.len()));
+        self.verbose(&format!("payload {spaced}"));
+        self.verbose(&format!("payload_hex {}", hex::encode(payload)));
+    }
+
+    fn print_erase_summary(&self, _planned: &PreparedErase) {
+        self.console.print("  Scope:  every pedal (A, B, and C)");
+        self.console.print("  Action: erase all mappings");
+    }
+
+    fn print_erase_transfer(&self, planned: &PreparedErase) {
+        let payload = planned.payload.as_slice();
+        let spaced: String = payload
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.verbose("scope every pedal");
+        self.verbose("action erase");
         self.verbose(&format!(
             "bmRequestType 0x{:02X} (Out/Vendor/Endpoint)",
             planned.setup.bm_request_type
@@ -1452,6 +1624,9 @@ pub fn run() -> Result<()> {
             yes,
         } => {
             savant.program(&pedal, &action, dry_run, yes)?;
+        }
+        Commands::Erase { dry_run, yes } => {
+            savant.erase(dry_run, yes)?;
         }
         Commands::Keys { json } => {
             savant.list_keys(json)?;

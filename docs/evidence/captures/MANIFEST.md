@@ -45,10 +45,11 @@ Stored in this directory (`docs/evidence/captures/`).
 | `xkeys-extended-keys-d7954dca-9d3a-43ec-8ff4-7e6cbe8919c4.pcap` | `3abf7ea072c640d89f018d476736ac7639a0f3935c58953dc111aef3adf85c56` | 1023226 | HID usage taps; 20-byte Observed row; F13–F24 / special-key no-writes |
 | `xkeys-extended-modifiers-9832c176-c560-4dbb-b423-93afdf28edb0.pcap` | `5aaad3b46b5a47d6994d89856f26fe74e4fe6a4afab2dbfe1bf3a993547a0d82` | 695306 | F0–F7 chords; malformed intended LGUI+A; intended RCtrl+A as F7 |
 | `xkeys-extended-sequences-8b4e33be-a9f6-4bfa-a335-0237b2047aee.pcap` | `c8ecc46a92467050bed5fe53e8cd7e8c860a2671e4f497fcf8b61e3ae5df464b` | 919162 | RCtrl+A (F4); Pedal C->a; a,b,c; Shift+A then b; F3 sequence rows; clear |
+| `xkeys-mouse-advanced-7c2f9a11-4e60-4b8d-9c1a-restart2.pcap` | `15e856f250ba8e169a612340dceecf19b8d2743af17655e5fdf3649fe21bf033` | 851415 | Mouse clicks and self-scroll; intended delay / repeat / press-release; modifier-only Ctrl; device-wide erase as request 8 |
 
 Hooked and UAC-off are extra successful programming captures: each contains the same Pedal A->a request-6 payload as held frame 1255.
 
-All seven traces enumerate only `05F3:0232` on `4.1.0` (`bcdDevice=0x0100`, `bcdUSB=0x0110`, `iSerialNumber=0`). Interrupt-IN count is 0; Play PID `0x030C` count is 0; HID `SET_REPORT` (`0x21`/`9`) count is 0.
+All eight traces enumerate only `05F3:0232` on `4.1.0` (`bcdDevice=0x0100`, `bcdUSB=0x0110`, `iSerialNumber=0`). Interrupt-IN count is 0; Play PID `0x030C` count is 0; HID `SET_REPORT` (`0x21`/`9`) count is 0.
 
 ## Extracted request-6 vectors
 
@@ -134,6 +135,30 @@ Eight request-6 writes, in capture order. After a,b,c the operator attempted F13
 | 7607 | 180.296875 | 16 | `01 00 00 07 04 f3 04 fe 04 fe f3 f3 fe 05 fe f3` | Observed: intended Ctrl-containing sequence; payload is `F3` (GUI-sequence evidence, not a verified Ctrl label) |
 | 8183 | 192.875000 | 17 | `01 00 00 0c 00 f3 f1 04 fe 04 fe f1 fe f3 05 fe 05` | Observed: intended Ctrl-containing sequence; payload is `F3`/`F1` (GUI-sequence evidence, not a verified Ctrl label) |
 | 8663 | 203.625000 | 5 | `01 00 00 00 00` | Observed / labelled: Escape x3 clear |
+
+### `xkeys-mouse-advanced-7c2f9a11-4e60-4b8d-9c1a-restart2.pcap`
+
+Nine request-6 writes in operator order. Device-wide erase produced no request 6; see request 8 below.
+
+| Frame | Time (s) | wLength | Payload | Scenario |
+| ---: | ---: | ---: | --- | --- |
+| 8469 | 208.812500 | 9 | `01 20 00 04 00 01 00 00 00` | Verified: Pedal A left click (`Esc b 1`) |
+| 8975 | 219.968750 | 9 | `02 20 00 04 00 02 00 00 00` | Verified: Pedal B right click (`Esc b 2`) |
+| 9677 | 235.109375 | 9 | `03 20 00 04 00 04 00 00 00` | Verified: Pedal C middle click (`Esc b 3`) |
+| 10439 | 252.265625 | 9 | `01 20 00 04 00 00 00 00 01` | Verified: Pedal A self-scroll up (`Esc s 1`) |
+| 11145 | 267.531250 | 9 | `02 20 00 04 00 00 00 00 ff` | Verified: Pedal B self-scroll down (`Esc s -1`) |
+| 12215 | 290.796875 | 11 | `03 00 00 03 03 04 fe 04 05 fe 05` | Observed: intended Pedal C `a`, delay, `b`. Body is `a` then `b`; no extra delay token |
+| 12997 | 308.187500 | 10 | `01 00 00 06 ff fe f1 1b fe 1b` | Observed: intended Pedal A repeat-toggle `x`. Payload includes `F1` and usage `1B` (X) |
+| 13983 | 329.203125 | 11 | `02 00 00 03 03 04 fe 04 05 fe 05` | Observed: intended Pedal B press `a` / release `b`. Same `a` then `b` body as frame 12215 |
+| 14367 | 337.546875 | 8 | `03 00 00 01 02 f0 fe f0` | Verified: Pedal C Left Ctrl only |
+
+Request 8 immediately after the last request-3 (frame 15051), operator-labelled device-wide erase (`Esc`, Backspace, `Esc` ×3):
+
+| Frame | Time (s) | Envelope | Payload | Scenario |
+| ---: | ---: | --- | --- | --- |
+| 15053 | 352.671875 | `0x42` / `bRequest=8` / `wLength=1` | `08` | Observed: intended device-wide erase. Not a request-6 write |
+
+Each of the nine request-6 writes is preceded by request 3 IN (`0xC2` / `wLength=7`). Complete-stage data for those IN transfers is empty in this file.
 
 ## Inspected and not stored
 

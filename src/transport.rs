@@ -27,7 +27,12 @@ pub mod usb_constants {
     pub const USB_REQUEST_TYPE_VENDOR_ENDPOINT_IN: u8 = 0xC2;
     pub const USB_VENDOR_REQUEST_6: u8 = 6;
     pub const USB_VENDOR_REQUEST_7: u8 = 7;
+    /// Observed native request-8 OUT: device-wide erase (`payload = [0x08]`).
+    pub const USB_VENDOR_REQUEST_8: u8 = 8;
 }
+
+/// Captured request-8 payload. One byte; device-wide, not per-pedal.
+pub const ERASE_PAYLOAD: [u8; 1] = [0x08];
 
 /// Verified Programming-mode request-6 control OUT (host-to-device, vendor, endpoint).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +67,48 @@ pub struct PreparedProgram {
     pub action: ProgramAction,
     pub setup: Request6Setup,
     pub payload: Vec<u8>,
+}
+
+/// Observed native request-8 control OUT (host-to-device, vendor, endpoint).
+///
+/// Same `0x42` envelope as request 6. `wLength` is 1 (`[0x08]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Request8Setup {
+    pub bm_request_type: u8,
+    pub b_request: u8,
+    pub w_value: u16,
+    pub w_index: u16,
+}
+
+/// Build the captured request-8 erase control OUT setup.
+#[must_use]
+pub fn request8_setup() -> Request8Setup {
+    Request8Setup {
+        bm_request_type: rusb::request_type(
+            Direction::Out,
+            RequestType::Vendor,
+            Recipient::Endpoint,
+        ),
+        b_request: usb_constants::USB_VENDOR_REQUEST_8,
+        w_value: 0,
+        w_index: 0,
+    }
+}
+
+/// Encoder-validated request-8 erase ready to preview or write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedErase {
+    pub setup: Request8Setup,
+    pub payload: Vec<u8>,
+}
+
+/// Build the captured erase transfer. Does not open USB.
+#[must_use]
+pub fn prepare_erase() -> PreparedErase {
+    PreparedErase {
+        setup: request8_setup(),
+        payload: ERASE_PAYLOAD.to_vec(),
+    }
 }
 
 /// Parse, validate, and encode one mapping. Does not open USB.
@@ -496,6 +543,46 @@ pub fn write_programming_request6(
     write_request6(&handle, payload, timeout_ms)
 }
 
+/// Issue one captured request-8 control OUT on an already-claimed handle.
+///
+/// Calls `write_control` exactly once. Does not issue request 2/3, SET_REPORT,
+/// or a save/readback transfer.
+pub fn write_request8(
+    handle: &DeviceHandle<GlobalContext>,
+    payload: &[u8],
+    timeout_ms: u64,
+) -> Result<usize, ProgrammingTransportError> {
+    fail_on_usb_if_requested();
+    let setup = request8_setup();
+    let written = handle
+        .write_control(
+            setup.bm_request_type,
+            setup.b_request,
+            setup.w_value,
+            setup.w_index,
+            payload,
+            Duration::from_millis(timeout_ms),
+        )
+        .map_err(|error| ProgrammingTransportError::from_rusb(ProgrammingStage::Write, error))?;
+    require_full_write(written, payload.len())
+}
+
+/// Enumerate, open PID 0232, claim interface 0, and write one request-8 OUT.
+///
+/// Releases the interface on return via [`UsbInterfaceGuard`].
+pub fn write_programming_request8(
+    payload: &[u8],
+    timeout_ms: u64,
+) -> Result<usize, ProgrammingTransportError> {
+    fail_on_usb_if_requested();
+    let device = find_programming_device()?;
+    let handle = device
+        .open()
+        .map_err(|error| ProgrammingTransportError::from_rusb(ProgrammingStage::Open, error))?;
+    let _interface = UsbInterfaceGuard::claim(&handle, PROGRAMMING_INTERFACE)?;
+    write_request8(&handle, payload, timeout_ms)
+}
+
 /// Issue the observed request-7 control IN on an already-claimed handle.
 ///
 /// Returns raw bytes only. Does not decode fields.
@@ -564,6 +651,40 @@ mod tests {
         assert_ne!(setup.b_request, usb_constants::HID_SET_REPORT);
         assert_ne!(setup.b_request, 2);
         assert_ne!(setup.b_request, 3);
+    }
+
+    #[test]
+    fn request8_setup_matches_captured_erase_envelope() {
+        let setup = request8_setup();
+        assert_eq!(setup.bm_request_type, 0x42);
+        assert_eq!(
+            setup.bm_request_type,
+            usb_constants::USB_REQUEST_TYPE_VENDOR_ENDPOINT_OUT
+        );
+        assert_eq!(setup.b_request, 8);
+        assert_eq!(setup.b_request, usb_constants::USB_VENDOR_REQUEST_8);
+        assert_eq!(setup.w_value, 0);
+        assert_eq!(setup.w_index, 0);
+        assert_ne!(setup.b_request, usb_constants::USB_VENDOR_REQUEST_6);
+        assert_ne!(setup.b_request, usb_constants::HID_SET_REPORT);
+    }
+
+    #[test]
+    fn prepare_erase_returns_captured_payload_without_usb() {
+        let planned = prepare_erase();
+        assert_eq!(planned.setup, request8_setup());
+        assert_eq!(planned.payload, [0x08]);
+    }
+
+    #[test]
+    fn prepare_program_encodes_mouse_without_usb() {
+        let planned = prepare_program("a", "left-click").expect("mouse mapping must encode");
+        assert_eq!(planned.action.to_string(), "left-click");
+        assert_eq!(planned.setup, request6_setup());
+        assert_eq!(
+            planned.payload,
+            [0x01, 0x20, 0x00, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00]
+        );
     }
 
     #[test]

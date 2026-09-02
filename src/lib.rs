@@ -1,7 +1,8 @@
 //! Library seams for the Savant Elite CLI.
 //!
 //! This crate is a structural split of the former monolithic binary. The active
-//! `savant program` path uses the verified encoder and a single write. Play-mode
+//! `savant program` path uses the verified encoder and a single write. `savant erase`
+//! is a separate request-8 write. Play-mode
 //! observation lives in [`monitor`].
 
 pub mod cli;

@@ -2,7 +2,7 @@
 
 Canonical notes for the Kinesis Savant Elite / X-keys unit in this repository. Not a universal X-keys specification. For install and everyday commands, see [README.md](README.md).
 
-**Evidence:** the seven USBPcap files in [docs/evidence/captures/](docs/evidence/captures/) and the raw catalog [docs/evidence/captures/MANIFEST.md](docs/evidence/captures/MANIFEST.md). Frame numbers, times, and `usb.data_fragment` bytes live only in that catalog.
+**Evidence:** the eight USBPcap files in [docs/evidence/captures/](docs/evidence/captures/) and the raw catalog [docs/evidence/captures/MANIFEST.md](docs/evidence/captures/MANIFEST.md). Frame numbers, times, and `usb.data_fragment` bytes live only in that catalog.
 
 Every protocol claim carries or inherits one class. These six classes apply to the USBPcap catalog only:
 
@@ -19,11 +19,11 @@ Unlabeled sentences inherit the nearest section default. Play-mode HID modifier 
 
 Operator/runtime Play checks (native request-6 write + Windows Raw Input) are a separate evidence stream. They never reclassify catalog frames and are not capture **Verified** bytes.
 
-Do not treat mouse, media, delays, repeats, max macro length, standalone LGUI+A, keypad digits, or keypad decimal with NumLock on as fact. A capture no-write is not a device rejection. True F13–F24 (`68`–`73`) failed native Play tests and are unsupported; keep those HID values as spec context only. The CLI encoder covers captured Keyboard/Keypad short chords, not a general X-keys family.
+Do not treat media, delays, repeats, max macro length, or standalone LGUI+A as fact. Mouse request-6 bytes and request-8 erase are in the catalog and are operator Play-confirmed via `savant program` / `savant erase`. A capture no-write is not a device rejection. True F13–F24 (`68`–`73`) failed native Play tests and are unsupported; keep those HID values as spec context only. The CLI encoder covers captured Keyboard/Keypad short chords, captured mouse envelopes, single-modifier-only, and request-8 erase — not a general X-keys family.
 
 ## Identity
 
-**Default:** Verified for USB IDs from the seven pcaps.
+**Default:** Verified for USB IDs from the eight pcaps.
 
 | Field | Value | Confidence |
 | --- | --- | --- |
@@ -37,7 +37,7 @@ Do not treat mouse, media, delays, repeats, max macro length, standalone LGUI+A,
 | Play PID `0x030C` | not in these traces | Family-other / Unknown here |
 | Physical Play / Program switch | operator procedure | Family-other |
 
-All seven traces enumerate only `05F3:0232` on endpoint `4.1.0`. They contain no Play-mode product ID and no HID interrupt reports. Verified pedal selectors are **A** (`01`), **B** (`02`), and **C** (`03`). Kinesis branding on PI Engineering hardware (`0x05F3`) is Family-other.
+All eight traces enumerate only `05F3:0232` on endpoint `4.1.0`. They contain no Play-mode product ID and no HID interrupt reports. Verified pedal selectors are **A** (`01`), **B** (`02`), and **C** (`03`). Kinesis branding on PI Engineering hardware (`0x05F3`) is Family-other.
 
 ## Request 6 vs request 7
 
@@ -53,13 +53,13 @@ Every successful programming write is a **host-to-device vendor endpoint** contr
 | `wValue` | `0` |
 | `wIndex` | `0` |
 | USBPcap destination | host → `4.1.0` (control endpoint 0) |
-| `wLength` | 5, 8, 11, 13, 14, 16, 17, or 20 (equals payload length) |
+| `wLength` | 5, 8, 9, 10, 11, 13, 14, 16, 17, or 20 (equals payload length) |
 
-Clean verified rows use 8, 11, 14, 17, or 20. Length 5 is the labelled clear. Length 13 is only the malformed intended-LGUI+A row (**Observed**). USBPcap records `URB_FUNCTION_VENDOR_ENDPOINT` on the setup stage. Complete-stage URBs for these writes carry no IN data. There is no second “save” transfer in the request-6 set. This is the only verified programming write.
+Clean verified keyboard rows use 8, 11, 14, 17, or 20. Length 5 is the labelled clear. Length 9 is the verified mouse-click / self-scroll envelope. Length 10 is only the intended-repeat row (**Observed**). Length 13 is only the malformed intended-LGUI+A row (**Observed**). USBPcap records `URB_FUNCTION_VENDOR_ENDPOINT` on the setup stage. Complete-stage URBs for these writes carry no IN data. There is no second “save” transfer in the request-6 set. This is the only verified programming write.
 
 ### Request 7 (do not over-call this “status”)
 
-**Observed** in all seven pcaps. Not a decoded status register.
+**Observed** in all eight pcaps. Not a decoded status register.
 
 | Field | Value | Confidence |
 | --- | --- | --- |
@@ -79,14 +79,15 @@ The host polls this IN throughout each session. Complete-stage 7-byte payloads s
 
 Golden pairing: request-7 setup (frame 7) completes with `00 89 00 00 00 00 00` (frame 8). `00 08 01 00 01 00 00` pairs with **request 3**, not request 7 (frames 2649–2650, immediately before a request-6 write). Field meanings are **Unknown**. `savant status` today reports USB PID only; it does not issue request 7.
 
-Other vendor transfers in the same traces (**Observed**, purpose **Unknown**):
+Other vendor transfers in the same traces (**Observed**, purpose **Unknown** unless noted):
 
 | Envelope | Notes |
 | --- | --- |
 | `0x42` / `bRequest=2` / `wLength=1` | OUT payloads alternate `00` and `02` |
-| `0xC2` / `bRequest=3` / `wLength=7` | In golden, one setup immediately before each of the five request-6 writes; complete data `00 08 01 00 01 00 00` |
+| `0xC2` / `bRequest=3` / `wLength=7` | In golden, one setup immediately before each of the five request-6 writes; complete data `00 08 01 00 01 00 00`. Also immediately before each mouse-session request-6 and the request-8 erase. Complete-stage IN data is empty in the mouse-advanced file |
+| `0x42` / `bRequest=8` / `wLength=1` / payload `08` | Mouse-advanced frame 15053. Operator-labelled device-wide erase. Not request 6 |
 
-These are not programming writes and are not part of a verified encoder.
+Request 2/3 are not keyboard programming writes. Request 8 is the captured device-wide erase (`savant erase`).
 
 ## Verified vectors
 
@@ -105,7 +106,37 @@ Original six:
 
 Pedal A→a also appears as hooked frame 1303 and UAC-off frame 2023 (same bytes as held 1255). Held frame 561 (`01 00 00 06 00 04 fe 04 04 fe 04`) is **Observed** only — not a named scenario.
 
-`encode_program` still matches those exact strings, and now also encodes Pedals A–C, tokens `F0`–`F7`, captured `clear`, comma-separated short chords via the recovered header rule, and supported Keyboard/Keypad names. It rejects consumer/media/mouse/power/delay/repeat/numeric usages and true `F13`–`F24` before USB (`savant program --action f13` is a rejection), instead of falling back to `0xCC` or `SET_REPORT`. `savant program` sends one request-6 transfer of that payload.
+`encode_program` still matches those exact strings, and now also encodes Pedals A–C, tokens `F0`–`F7`, captured `clear`, comma-separated short chords via the recovered header rule, and supported Keyboard/Keypad names. It rejects consumer/media/`mouse`/`click`/power/delay/repeat/numeric usages and true `F13`–`F24` before USB (`savant program --action f13` is a rejection), instead of falling back to `0xCC` or `SET_REPORT`. `savant program` sends one request-6 transfer of that payload, including the named mouse actions below. `savant erase` sends the captured request-8 wipe.
+
+### Mouse and advanced (2026-09-02 lab session)
+
+**Default:** Verified for the five named mouse rows. Keyboard-shaped leftovers from the same session are **Observed**.
+
+Nine request-6 writes plus one request-8. Frame catalog: [MANIFEST.md](docs/evidence/captures/MANIFEST.md) (`xkeys-mouse-advanced-7c2f9a11-4e60-4b8d-9c1a-restart2.pcap`).
+
+Mouse envelope (9 bytes), distinct from keyboard `00 00` at bytes 1–2:
+
+| Scenario | Pedal | Payload |
+| --- | --- | --- |
+| Left click | A | `01 20 00 04 00 01 00 00 00` |
+| Right click | B | `02 20 00 04 00 02 00 00 00` |
+| Middle click | C | `03 20 00 04 00 04 00 00 00` |
+| Self-scroll up | A | `01 20 00 04 00 00 00 00 01` |
+| Self-scroll down | B | `02 20 00 04 00 00 00 00 ff` |
+
+Inferred only: byte 0 is still the pedal; byte 1 `20` marks this envelope; offset 5 looks like a button bitmap (`01` left, `02` right, `04` middle); the last byte looks like scroll (`01` / `ff`). Operator Play confirmed left/right/middle click and both self-scroll directions after native `savant program` writes. `savant monitor` still watches keyboard Raw Input only.
+
+Same session, not mouse:
+
+| Intended | Captured bytes | Class |
+| --- | --- | --- |
+| Pedal C `a`, delay, `b` | `03 00 00 03 03 04 fe 04 05 fe 05` (`a` then `b`; header `03 03`, no delay token) | Observed |
+| Pedal A repeat-toggle `x` | `01 00 00 06 ff fe f1 1b fe 1b` (`F1` + usage `1B`) | Observed |
+| Pedal B press `a` / release `b` | `02 00 00 03 03 04 fe 04 05 fe 05` (same `a` then `b` body as the delay row) | Observed |
+| Pedal C Left Ctrl only | `03 00 00 01 02 f0 fe f0` | Verified capture label |
+| Device-wide erase | no request 6; request 8 payload `08` | Observed |
+
+The current CLI still rejects `mouse` / `click` / `delay` / `repeat`. Do not treat delay or press/release as encoded until a Play test shows behavior those rows do not share with ordinary `a,b`.
 
 **Operator / runtime (not a capture).** Pedal A→a is hardware-verified (2026-09-02): after that write, Pedal A typed lowercase `a` in Play mode. Later native writes on the same Windows host confirmed more Keyboard/Keypad categories and a Pedal C `clear` disable. Inventory and leftover lab state: [Operator / runtime Play inventory](#operator--runtime-play-inventory). Those confirmations are not USBPcap Play-mode reports. All `F0`–`F7` have capture evidence; not every token had an independent native-CLI Play test.
 
@@ -140,7 +171,7 @@ Standalone intended LGUI+A produced a malformed 13-byte row, not a clean `F3` wr
 
 ## Operator / runtime Play inventory
 
-**Not USBPcap.** Native `savant program` request-6 writes on this Windows host, then `savant monitor` device-filtered Raw Input for Play PID `05F3:030C`. These rows do not add frames to the capture archive (interrupt-IN count remains 0; no PID `0x030C` traffic in the seven pcaps). Do not cite them as catalog **Verified** bytes.
+**Not USBPcap.** Native `savant program` request-6 writes on this Windows host, then `savant monitor` device-filtered Raw Input for Play PID `05F3:030C`. These rows do not add frames to the capture archive (interrupt-IN count remains 0; no PID `0x030C` traffic in the eight pcaps). Do not cite them as catalog **Verified** bytes.
 
 **Initial confirmations**
 
@@ -176,9 +207,18 @@ Standalone intended LGUI+A produced a malformed 13-byte row, not a clean `F3` wr
 | 6 | KeypadDecimal | `63` | emitted Delete while NumLock off (normal keypad ./Del translation, not a drop) |
 | 6 | Pedal C `clear` | `03 00 00 00 00` | no events after C tap; disable confirmed |
 
-**Current leftover lab state:** Pedal A Keypad Subtract, Pedal B Keypad Decimal, Pedal C cleared. That is leftover lab state, not a recommended everyday mapping.
+**Current leftover lab state:** all three pedals blank after a native `savant erase --yes` Play check. That is leftover lab state, not a recommended everyday mapping.
 
-**Still unconfirmed here:** keypad decimal with NumLock on; keypad digits; standalone native LGUI and multi-mod release semantics; mouse, media, delay, repeat.
+**Later mouse / erase / keypad confirmations** (same native write method; mouse watched on the pointer, not `savant monitor`):
+
+| Mapping | Play result |
+| --- | --- |
+| `left-click` / `right-click` / `middle-click` | matching mouse buttons |
+| `scroll-up` / `scroll-down` | matching wheel scroll |
+| `keypad-1` / `keypad-0` / `keypad-decimal` | digits and `.` with NumLock on; End / Insert / Delete with NumLock off |
+| `savant erase` (request 8) | all three pedals blank |
+
+**Still unconfirmed here:** standalone native LGUI and multi-mod release semantics; media; delay; repeat.
 
 ## Inferred layout
 
@@ -189,7 +229,9 @@ Standalone intended LGUI+A produced a malformed 13-byte row, not a clean `F3` wr
 | 0 | `01` Pedal A; `02` Pedal B; `03` Pedal C | Pedal select | Other numbering schemes |
 | 1–2 | `00 00` on every request-6 payload here, including clear | Unused or fixed on this unit | Reserved-must-be-zero as a family rule |
 | 3–4 | `01 02` single tap; `02 04` one modifier; `03 06` / `04 08` / `05 0a` two–four modifiers; `06 00` / `09 00` / `0c 00` / `0f 00` sequences; `00 00` clear; `07 04` and `09 ff` on Observed rows only | Recovered header: `N==1` → `00`, `M+1`, `2*(M+1)`; `N>=2` → body length as 16-bit BE then `00` | A family rule beyond these short Keyboard/Keypad chords |
-| 5+ | HID usage in `KEY FE KEY`; modifiers wrap as `Fn … FE Fn` | Keyboard usage IDs and F0–F7 tokens | Mouse, media, hold/repeat, or programmable F13–F24 |
+| 5+ | HID usage in `KEY FE KEY`; modifiers wrap as `Fn … FE Fn` | Keyboard usage IDs and F0–F7 tokens | Media, hold/repeat, or programmable F13–F24 |
+
+Mouse rows use byte 1 `20` and a 9-byte envelope instead of `KEY FE KEY`. See [Mouse and advanced](#mouse-and-advanced-2026-09-02-lab-session).
 
 Worked readings (verified rows only): Pedal A→a is select `01` then tap `04 FE 04`. Pedal C→a is the same tap after `03`. Ctrl+A is `F0`, tap `04`, `F0`. LShift+A is `F1`, tap `04`, `F1`. a,b,c is tap `04` then `05` then `06`. Shift+A then b is that Shift+A run then tap `05`. Ctrl+Shift+Alt+GUI+A opens `F0 F1 F2 F3`, taps `04` once, and closes with the captured `FE` token order. Wrap-close order is Observed per row, not a proven family rule.
 
@@ -201,7 +243,7 @@ Wrong as the programming path **on this captured unit**. Not a statement about e
 
 | Upstream claim | This unit |
 | --- | --- |
-| HID `SET_REPORT` (`bmRequestType 0x21`, `bRequest 0x09`) | Count is 0 in the seven pcaps |
+| HID `SET_REPORT` (`bmRequestType 0x21`, `bRequest 0x09`) | Count is 0 in the eight pcaps |
 | `CMD_SET_KEY_MACRO` `0xCC` | No request-6 payload starts with `CC` |
 | `CMD_GET_KEY_MACRO` `0xCD` readback | No `CD` programming transfer |
 | `CMD_SAVE_TO_EEPROM` `0xCE` as a separate save | No separate save |
@@ -209,7 +251,7 @@ Wrong as the programming path **on this captured unit**. Not a statement about e
 | Format spray (`fmt1-feat` → 36-byte → vendor `0x40`) | Single `0x42` / request 6 envelope |
 | Pedal indices 0/1/2 inside an `0xCC` buffer | Byte 0 is `01` (A), `02` (B), or `03` (C) |
 | Programming-mode modifiers are the HID bitmap | Tokens `F0`–`F7`; HID bits are Play-mode only |
-| Current `savant program` writes a working mapping | Letters (A→a), navigation, locks, Pause, Application/Menu, keypad operators, captured `clear`, and RCtrl (`F4` in RCtrl+F24) are operator-confirmed in Play mode. True F13–F24 write-then-silent results are a device limitation. Keypad digits and keypad decimal with NumLock on remain without a Play check |
+| Current `savant program` writes a working mapping | Letters (A→a), navigation, locks, Pause, Application/Menu, keypad operators and digits, captured `clear`, mouse clicks and self-scroll, `savant erase`, and RCtrl (`F4` in RCtrl+F24) are operator-confirmed in Play mode. True F13–F24 write-then-silent results are a device limitation |
 | macOS programming is verified | Unknown here (traces are from a Windows 7 lab host) |
 
 Family command bytes such as `0xB5`, `0xB6`, `0xC1`, `0xCA` and a 36-byte SDK template are **Family-other**. Do not import them as this unit’s protocol.
@@ -218,7 +260,7 @@ Retained as CLI or product context, not protocol proof: VID `0x05F3`, Programmin
 
 ## Play mode
 
-**Default:** Family-other for USB HID keyboard semantics. These seven pcaps have **no** Play-mode traffic (interrupt-IN count 0; no PID `0x030C`).
+**Default:** Family-other for USB HID keyboard semantics. These eight pcaps have **no** Play-mode traffic (interrupt-IN count 0; no PID `0x030C`).
 
 A successful request-6 URB is not Play-mode confirmation. Scenario names are Verified as **labels** in the catalog; the confirmation reports themselves are not stored here.
 
@@ -253,10 +295,11 @@ The seven traces sit in Git next to the catalog. Hashes and frames: [MANIFEST.md
 | `xkeys-extended-keys-d7954dca-9d3a-43ec-8ff4-7e6cbe8919c4.pcap` | Extended HID usages; Observed `I fo` row; F13–F24 / special-key no-writes |
 | `xkeys-extended-modifiers-9832c176-c560-4dbb-b423-93afdf28edb0.pcap` | F0–F7 chords; malformed LGUI; intended RCtrl as `F7` |
 | `xkeys-extended-sequences-8b4e33be-a9f6-4bfa-a335-0237b2047aee.pcap` | `F4`; selector `03`; sequences; Observed GUI rows; labelled clear |
+| `xkeys-mouse-advanced-7c2f9a11-4e60-4b8d-9c1a-restart2.pcap` | Mouse clicks and self-scroll; modifier-only Ctrl; Observed delay/repeat/press-release leftovers; request-8 erase |
 
 Provenance: recovered on 2026-09-02 from a Windows 7 lab programming session. SHA-256 is of the stored file bytes. Extracted with Wireshark `tshark` 4.6.8. Shared docs record repository-relative names only.
 
-These files are raw USBPcap of Programming-mode sessions. All seven contain only endpoint `4.1.0`, identified as VID `05F3` PID `0232`; they have no captured USB serial-number strings and no other device endpoints. They still expose raw pedal control traffic, timing, poll responses, and programmed macro payloads, but not arbitrary host keyboard text. They are not Play-mode keystroke logs and are not a mapping readback. Do not treat a successful URB as proof the mapping persisted.
+These files are raw USBPcap of Programming-mode sessions. All eight contain only endpoint `4.1.0`, identified as VID `05F3` PID `0232`; they have no captured USB serial-number strings and no other device endpoints. They still expose raw pedal control traffic, timing, poll responses, and programmed macro payloads, but not arbitrary host keyboard text. They are not Play-mode keystroke logs and are not a mapping readback. Do not treat a successful URB as proof the mapping persisted.
 
 Three other lab traces were inspected and **not** stored here (no `0x42` / request-6 frames): `xkeys-programming-capture.pcap`, `xkeys-programming.pcap`, `xkeys-scheduled-8c2877b8-e98a-4f09-80b7-93aa513ff8ee.pcap`. Hashes are in the catalog.
 
@@ -264,7 +307,7 @@ Three other lab traces were inspected and **not** stored here (no `0x42` / reque
 
 **Default:** Unknown. Do not close by analogy.
 
-Closed on this unit (operator/runtime, not capture frames): PrintScreen (`46`, RELEASE-only — expected Windows), ScrollLock, Application/Menu, captured `clear` (Pedal C disable), and true F13–F24 (unsupported). Still open: standalone native LGUI and multi-mod release semantics, keypad decimal with NumLock on, keypad digits, mouse, media, delays, repeats, long macros, and maximum length.
+Closed on this unit (operator/runtime, not capture frames): PrintScreen (`46`, RELEASE-only — expected Windows), ScrollLock, Application/Menu, captured `clear`, mouse clicks and self-scroll, keypad digits and decimal with NumLock on and off, `savant erase`, and true F13–F24 (unsupported). Still open: standalone native LGUI and multi-mod release semantics, media, delays, repeats, long macros, and maximum length.
 
 | Question | Why it is open |
 | --- | --- |
@@ -278,9 +321,13 @@ Closed on this unit (operator/runtime, not capture frames): PrintScreen (`46`, R
 | Whether a successful URB equals a persisted mapping | No Play-mode reports in this archive. Operator confirmation exists for the [runtime inventory](#operator--runtime-play-inventory); those are not captured reports |
 | F13–F24 programmability | Closed for this unit: native 8-byte / 11-byte writes produced no Play events; the CLI rejects them before USB. HID `0x68`–`0x73` stay spec context only |
 | PrintScreen, ScrollLock, Application/Menu, `clear` | Closed: native Play confirmed PrintScreen RELEASE-only, ScrollLock press/release, Application press/release, and Pedal C `clear` disable |
-| Keypad decimal with NumLock on | Optional gap: with NumLock off the `63` write emitted Delete (normal ./Del translation). No NumLock-on retest |
-| Keypad digits | Encode; no native Play check |
-| Mouse, media, delay, repeat | No vectors |
+| Keypad decimal with NumLock on | Closed: native `keypad-decimal` typed `.` with NumLock on and Delete with NumLock off |
+| Keypad digits | Closed: native `keypad-1` / `keypad-0` typed `1` / `0` with NumLock on and End / Insert with NumLock off |
+| Mouse click / self-scroll | Closed: encoder emits the captured 9-byte envelope; Play confirmed clicks and both scroll directions |
+| Delay (`Esc 5`) and press/release (`Esc` + Left Ctrl) | Intended rows captured as `a` then `b` with header `03 03`. No distinct delay or split token |
+| Repeat toggle (`Esc` + Left Shift) | One Observed 10-byte row with `F1` + X. Not a proven repeat opcode |
+| Device-wide erase | Closed: request 8 / `08` via `savant erase`; Play confirmed all pedals blank |
+| Media | No vectors |
 | Any persist mechanism other than the single request-6 write | `0xCE` / `0xCD` contradicted here; otherwise Unknown |
 | macOS `0x42` / request 6 | Not tested in this archive |
 | Play PID `0x030C` on this unit | Not enumerated here |

@@ -4,7 +4,7 @@
 //! Play-mode [`KeyAction`] uses standard HID modifier bits. Programming-mode
 //! types ([`Pedal`], [`ProgramAction`]) are a separate owned macro model that
 //! encodes captured/static-cross-checked request-6 payloads. `savant program`
-//! is the only write path.
+//! writes those mappings. `savant erase` is a separate request-8 write.
 
 use std::fmt;
 use std::str::FromStr;
@@ -726,7 +726,62 @@ impl fmt::Display for ProgramChord {
     }
 }
 
-/// Programming-mode action: `clear`, or a sequence of one or more keyed chords.
+/// Captured 9-byte mouse envelope (byte 1 = `0x20`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MouseMapping {
+    LeftClick,
+    RightClick,
+    MiddleClick,
+    ScrollUp,
+    ScrollDown,
+}
+
+impl MouseMapping {
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "left-click" | "leftclick" => Some(Self::LeftClick),
+            "right-click" | "rightclick" => Some(Self::RightClick),
+            "middle-click" | "middleclick" => Some(Self::MiddleClick),
+            "scroll-up" | "scrollup" => Some(Self::ScrollUp),
+            "scroll-down" | "scrolldown" => Some(Self::ScrollDown),
+            _ => None,
+        }
+    }
+
+    /// Button bitmap at offset 5 (`01` / `02` / `04` / `00`).
+    #[must_use]
+    pub const fn button_byte(self) -> u8 {
+        match self {
+            Self::LeftClick => 0x01,
+            Self::RightClick => 0x02,
+            Self::MiddleClick => 0x04,
+            Self::ScrollUp | Self::ScrollDown => 0x00,
+        }
+    }
+
+    /// Scroll byte at offset 8 (`00` / `01` / `ff`).
+    #[must_use]
+    pub const fn scroll_byte(self) -> u8 {
+        match self {
+            Self::LeftClick | Self::RightClick | Self::MiddleClick => 0x00,
+            Self::ScrollUp => 0x01,
+            Self::ScrollDown => 0xFF,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LeftClick => "left-click",
+            Self::RightClick => "right-click",
+            Self::MiddleClick => "middle-click",
+            Self::ScrollUp => "scroll-up",
+            Self::ScrollDown => "scroll-down",
+        }
+    }
+}
+
+/// Programming-mode action: `clear`, mouse, one modifier, or keyed chords.
 ///
 /// This is not a Play-mode [`KeyAction`]. Previously valid spellings (`a`,
 /// `b`, `ctrl+a`, `a,b`, `ctrl+a,b`) still parse and still emit the captured
@@ -735,6 +790,10 @@ impl fmt::Display for ProgramChord {
 pub enum ProgramAction {
     /// Captured five-byte clear: `[pedal, 00, 00, 00, 00]`. Cannot be combined.
     Clear,
+    /// Captured 9-byte mouse click or self-scroll. Cannot be combined.
+    Mouse(MouseMapping),
+    /// One modifier with no key (`ctrl`, `shift`, …). Captured as `Fn FE Fn`.
+    ModifierOnly(ProgramModifier),
     /// One or more comma-separated chords.
     Macro(Vec<ProgramChord>),
 }
@@ -742,17 +801,19 @@ pub enum ProgramAction {
 impl ProgramAction {
     /// Parse a programming action spelling.
     ///
-    /// Grammar: `clear`, or `chord[,chord…]` where each chord is
-    /// `[modifier+…]key`. `clear` cannot be combined with other chords.
+    /// Grammar: `clear`, a mouse name, a single modifier, or
+    /// `chord[,chord…]` where each chord is `[modifier+…]key`.
+    /// `clear` and mouse names cannot be combined with other chords.
     pub fn from_string(s: &str) -> Result<Self> {
         s.parse()
     }
 
-    /// Number of key taps in a macro (`0` for `clear`).
+    /// Number of key taps in a macro (`0` for `clear` and mouse).
     #[must_use]
     pub fn key_tap_count(&self) -> usize {
         match self {
-            Self::Clear => 0,
+            Self::Clear | Self::Mouse(_) => 0,
+            Self::ModifierOnly(_) => 1,
             Self::Macro(chords) => chords.len(),
         }
     }
@@ -770,6 +831,11 @@ impl FromStr for ProgramAction {
             return Ok(Self::Clear);
         }
 
+        let lower = trimmed.to_ascii_lowercase();
+        if let Some(mouse) = MouseMapping::from_name(&lower) {
+            return Ok(Self::Mouse(mouse));
+        }
+
         let parts: Vec<&str> = trimmed.split(',').collect();
         if parts
             .iter()
@@ -778,6 +844,24 @@ impl FromStr for ProgramAction {
             return Err(anyhow!(
                 "clear cannot be combined with other actions (duplicate or conflicting clear)"
             ));
+        }
+
+        let mouse_parts: Vec<&str> = parts
+            .iter()
+            .map(|part| part.trim())
+            .filter(|part| MouseMapping::from_name(&part.to_ascii_lowercase()).is_some())
+            .collect();
+        if !mouse_parts.is_empty() {
+            return Err(anyhow!(
+                "Mouse actions cannot be combined with modifiers or other keys (use left-click, right-click, middle-click, scroll-up, or scroll-down alone)"
+            ));
+        }
+
+        if parts.len() == 1 {
+            let name = parts[0].trim().to_ascii_lowercase();
+            if let Some(modifier) = ProgramModifier::from_name(&name) {
+                return Ok(Self::ModifierOnly(modifier));
+            }
         }
 
         let mut chords = Vec::with_capacity(parts.len());
@@ -795,6 +879,8 @@ impl fmt::Display for ProgramAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Clear => f.write_str("clear"),
+            Self::Mouse(mouse) => f.write_str(mouse.as_str()),
+            Self::ModifierOnly(modifier) => f.write_str(modifier.as_str()),
             Self::Macro(chords) => {
                 for (index, chord) in chords.iter().enumerate() {
                     if index > 0 {
@@ -843,6 +929,11 @@ fn is_f13_f24_usage(code: u8) -> bool {
 }
 
 fn parse_program_key(name: &str) -> Result<u8> {
+    if MouseMapping::from_name(name).is_some() {
+        return Err(anyhow!(
+            "Mouse actions cannot be combined with modifiers or other keys (use left-click, right-click, middle-click, scroll-up, or scroll-down alone)"
+        ));
+    }
     if is_unsupported_program_token(name) {
         return Err(anyhow!(
             "Unsupported programming key \"{name}\": consumer/media, mouse, power/sleep, delays, and repeats are out of scope"
@@ -882,9 +973,6 @@ fn is_unsupported_program_token(name: &str) -> bool {
             | "consumer"
             | "mouse"
             | "click"
-            | "leftclick"
-            | "rightclick"
-            | "middleclick"
             | "wheel"
             | "power"
             | "sleep"
@@ -1014,8 +1102,12 @@ fn program_key_name(code: u8) -> &'static str {
 ///
 /// # Byte rules
 ///
-/// * Byte 0 is the pedal selector (`01`/`02`/`03`). Byte 1 is `00`.
+/// * Byte 0 is the pedal selector (`01`/`02`/`03`). Keyboard byte 1 is `00`.
 /// * `clear` is exactly `[pedal, 00, 00, 00, 00]` and has no body.
+/// * Mouse mappings are exactly
+///   `[pedal, 20, 00, 04, 00, button, 00, 00, scroll]`.
+/// * A single modifier with no key (`ctrl`) is the `N == 1` header plus
+///   `Fn FE Fn`. Multi-modifier-only chords are rejected (no capture).
 /// * Each chord body is modifier-down tokens (`F0`–`F7` in canonical order),
 ///   then `KEY FE KEY`, then `FE MOD` for each modifier in canonical reverse
 ///   order.
@@ -1029,11 +1121,35 @@ fn program_key_name(code: u8) -> &'static str {
 /// * Body length must not exceed [`PROGRAM_JOURNAL_LIMIT`] (`0x800`).
 ///
 /// Previously valid basic spellings still emit the captured payloads. Empty,
-/// modifier-only, malformed, conflicting `clear`, over-length, unknown keys,
-/// and F13-F24 (hardware: write accepted, no Play event) fail before USB.
+/// multi-modifier-only, malformed, conflicting `clear`, over-length, unknown
+/// keys, and F13-F24 (hardware: write accepted, no Play event) fail before USB.
 pub fn encode_program(pedal: Pedal, action: &ProgramAction) -> Result<Vec<u8>> {
     match action {
         ProgramAction::Clear => Ok(vec![pedal.as_byte(), 0x00, 0x00, 0x00, 0x00]),
+        ProgramAction::Mouse(mouse) => Ok(vec![
+            pedal.as_byte(),
+            0x20,
+            0x00,
+            0x04,
+            0x00,
+            mouse.button_byte(),
+            0x00,
+            0x00,
+            mouse.scroll_byte(),
+        ]),
+        ProgramAction::ModifierOnly(modifier) => {
+            let token = modifier.token();
+            Ok(vec![
+                pedal.as_byte(),
+                0x00,
+                0x00,
+                0x01,
+                0x02,
+                token,
+                PROGRAM_KEY_UP,
+                token,
+            ])
+        }
         ProgramAction::Macro(chords) => {
             if chords.is_empty() {
                 return Err(anyhow!("Programming action cannot be empty"));
@@ -1823,6 +1939,57 @@ mod tests {
     }
 
     #[test]
+    fn encode_mouse_and_single_modifier_match_capture() {
+        assert_eq!(
+            encode_ok("a", "left-click"),
+            [0x01, 0x20, 0x00, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(
+            encode_ok("b", "right-click"),
+            [0x02, 0x20, 0x00, 0x04, 0x00, 0x02, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(
+            encode_ok("c", "middle-click"),
+            [0x03, 0x20, 0x00, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(
+            encode_ok("a", "scroll-up"),
+            [0x01, 0x20, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x01]
+        );
+        assert_eq!(
+            encode_ok("b", "scroll-down"),
+            [0x02, 0x20, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0xFF]
+        );
+        assert_eq!(
+            encode_ok("c", "ctrl"),
+            [0x03, 0x00, 0x00, 0x01, 0x02, 0xF0, 0xFE, 0xF0]
+        );
+        assert_eq!(encode_ok("a", "leftclick"), encode_ok("a", "left-click"));
+        assert_eq!(encode_ok("a", "CTRL"), encode_ok("a", "ctrl"));
+        assert_eq!(
+            ProgramAction::from_string("ctrl").unwrap(),
+            ProgramAction::ModifierOnly(ProgramModifier::LeftCtrl)
+        );
+    }
+
+    #[test]
+    fn program_parser_rejects_mouse_combinations() {
+        for spelling in [
+            "left-click,a",
+            "a,right-click",
+            "ctrl+left-click",
+            "left-click,right-click",
+        ] {
+            let err = ProgramAction::from_string(spelling).unwrap_err();
+            let message = err.to_string().to_lowercase();
+            assert!(
+                message.contains("mouse") || message.contains("cannot be combined"),
+                "{spelling} should reject combined mouse: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn program_parser_accepts_documented_aliases() {
         let ctrl = encode_ok("a", "control+a");
         assert_eq!(ctrl, encode_ok("a", "lctrl+a"));
@@ -1858,7 +2025,7 @@ mod tests {
             "empty action: {empty}"
         );
 
-        for spelling in ["ctrl", "shift+alt", "ctrl+", "+a", "a+", "ctrl++a"] {
+        for spelling in ["shift+alt", "ctrl+", "+a", "a+", "ctrl++a"] {
             let err = ProgramAction::from_string(spelling).unwrap_err();
             let message = err.to_string().to_lowercase();
             assert!(
