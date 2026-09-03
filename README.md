@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/SamLeatherdale/savant-elite/main/illustration.jpg" alt="Savant Elite Foot Pedal Illustration" width="600">
+<img src="https://raw.githubusercontent.com/SamLeatherdale/savant-elite/main/illustration.jpg" alt="Savant Elite Foot Pedal Illustration" width="480">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT%2BOpenAI%2FAnthropic%20Rider-blue.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
